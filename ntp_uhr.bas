@@ -1,11 +1,12 @@
 ' NTP Clock with I2C-components
-' Thomas Dressler 2009
+' Thomas Dressler 2009 -2010
 '--------------------------------------------------------------
 ' Networking parts based on Code by Ben Zijlstra and Bascom Forum NetIo-Thread
 ' http://bascom-forum.de/index.php/topic,1781.0.html
 '--------------------------------------------------------------
 'V1.0 Jan 2009
 'V1.1 Jun 2009
+'V1.2 Sep 2010
 
 $regfile = "m32def.dat"
 $crystal = 16000000
@@ -17,7 +18,7 @@ $swstack = 120
 $framesize = 160
 
 
-
+Config Input = Crlf , Echo = Crlf
 'Config Clock
 Config Clock = User
 Config Date = Dmy , Separator = .
@@ -33,15 +34,17 @@ Declare Sub Show_display()
 Declare Sub Display_time
 Declare Sub Display_temp
 
-'variables for I2C
+'variables
 Dim I As Byte
 Dim R As Byte
 Dim T As Byte
 Dim S As String * 16
+Dim S2 As String * 2
 Dim Bs(5) As String * 2
 Dim Mb As Byte
 Dim Time_local As Long
-
+Dim Yearoff As Byte
+Dim Ee_year As Eram Byte At 1
 
 '************ Config I2C *******************************
 
@@ -65,7 +68,7 @@ $include "saa1064decl.bas"
 $include "pcf8583decl.bas"
 $include "lm75decl.bas"
 
-
+Yearoff = Ee_year
 '****************** Config TCP **************************************************************
 Const Use_dhcp = 0                                          'not working yet
 Const Use_ntp = 1
@@ -73,7 +76,7 @@ Const Use_ntp = 1
 'network parameter stored in EEPROM
 
 
-Dim Ee_mac(6) As Eram Byte At 1
+Dim Ee_mac(6) As Eram Byte At Ee_year + 1
 Dim Ee_ip As Eram Long At Ee_mac + 6
 Dim Ee_mask As Eram Long At Ee_ip + 4
 Dim Ee_gw As Eram Long At Ee_mask + 4
@@ -117,7 +120,7 @@ J11 = 1                                                     'Pullup
 
 'Start mainprogram
 Print
-Print "Init I2C"
+Print "NetIO-Clock V1.2 (04.09.2010)"
 
 ' ******************   init Display and pcf *********************
 I2cinit
@@ -222,6 +225,8 @@ Do
          Time_local = Ntp_local
          Gosub Getdatetime                                  'correct ntp_local
          Gosub Set_clock_to_pcf                             'set PCF8583time
+         Yearoff = _year And &HFC
+         Ee_year = Yearoff
    End If
    If Ntp_ready > 10 Then
       If Ntp_ready = 255 Then
@@ -235,12 +240,15 @@ Do
    T = Inkey()
 
    If T > 0 Then
+      Input S
       Select Case T
          Case &H53 : Gosub Set_pcf_date                     ' Taste S
          Case &H73 : Gosub Set_pcf_time                     ' Taste s
          Case &H47 : Gosub Print_date                       ' Taste G
          Case &H67 : Gosub Print_time                       ' Taste g
          Case &H74 : Gosub Print_temp                       ' Taste t
+         Case &H3F : GOSUB Print_help
+
       End Select
    End If
 
@@ -342,7 +350,7 @@ Return
 Set_sys_date:
    _day = Pcf8583_tag
    _month = Pcf8583_monat
-   _year = Pcf8583_jahr + 8                                 'hardcoded for year after 2008
+   _year = Pcf8583_jahr + Yearoff
 Return
 
 'set pcf to current time
@@ -361,54 +369,63 @@ Return
 
 'Set Time manually to pcf
 Set_pcf_time:
-   Input "Set Time( HH:MI:SS ): >" , S
+   Print "Set Time( HH:MI ): >" ; S
    T = Split(s , Bs(1) , ":")
-   If T = 5 Then
+
+   If T = 3 Then
       R = Val(bs(1))
+
+
       If R >= 0 And R < 24 Then
          Pcf8583_stunde = R
       End If
-      R = Val(bs(3))
+      R = Val(bs(2))
 
       If R >= 0 And R < 60 Then
          Pcf8583_minute = R
       End If
-      R = Val(bs(5))
-
-      If R >= 0 And R < 60 Then
-         Pcf8583_sekunde = R
-      End If
+      Pcf8583_sekunde = 0
       Call Pcf8583_set_time(pcf8583_stunde , Pcf8583_minute , Pcf8583_sekunde)
+
+      Gosub Set_clock_from_pcf
       Gosub Set_sys_time
       Time_local = Syssec()
+      Print "Set Time  to: " ; _hour ; ":" ; _min ; ":" ; _sec
+   Else
+      Print "Split Error:" ; T
    End If
+
 Return
 
 
 
 'Set Datum manually to pcf
 Set_pcf_date:
-   Input "Set Date( DD.MM.YY ): >" , S
+   Print "Set Date( DD.MM.YY ): >" ; S
+
    T = Split(s , Bs(1) , ".")
 
-   If T = 5 Then
+   If T = 4 Then
       R = Val(bs(1))
 
       If R > 0 And R < 32 Then
          Pcf8583_tag = R
       End If
-      R = Val(bs(3))
+      R = Val(bs(2))
 
       If R > 0 And R < 13 Then
          Pcf8583_monat = R
       End If
-      R = Val(bs(5))
+      R = Val(bs(3))
 
-      Pcf8583_jahr = R
+      Pcf8583_jahr = R - Yearoff
       Gosub Set_sys_date
       Time_local = Syssec()
       Pcf8583_wtag = Dayofweek()
       Call Pcf8583_set_date(pcf8583_tag , Pcf8583_monat , Pcf8583_jahr , Pcf8583_wtag)
+      Print "Set Date to: " ; _day ; "." ; _month ; "." ; _year ;
+   Else
+      Print "Split Error:" ; T
    End If
 Return
 
@@ -441,8 +458,11 @@ Set_clock_from_pcf:
    _hour = Pcf8583_stunde
    _day = Pcf8583_tag
    _month = Pcf8583_monat
-   _year = Pcf8583_jahr + 8
+   _year = Pcf8583_jahr + Yearoff
    Print "Set Clock from PCF to: " ; _day ; "." ; _month ; "." ; _year ; "   " ; _hour ; ":" ; _min ; ":" ; _sec
+Return
+Print_help:
+Print "Usage: sHH:MI, SDD.MM.YY, g, G, t, ?"
 Return
 
 
@@ -543,8 +563,10 @@ Data &H3F , &H06 , &H5B , &H4F , &H66 , &H6D , &H7D , &H07 , &H7F , &H6F
 ' char GRD
 Data &H63
 
-'default net data
+'default data
 $eeprom
+Year:
+Data 8
 Initlen:
 Data 28
 Macaddr:
@@ -554,9 +576,9 @@ Data 192 , 168 , 101 , 103
 Netmask:
 Data 255 , 255 , 255 , 0
 Gwip:
-Data 192 , 168 , 101 , 1
+Data 192 , 168 , 101 , 254
 Gwmac:
-Data &H00 , &H1A , &H4F , &H86 , &H7C , &HC7
+Data &H00 , &H24 , &H4E , &H3C , &H1B , &H67
 Ntpip:
 Data 192 , 53 , 103 , 108
 Ntpoff:

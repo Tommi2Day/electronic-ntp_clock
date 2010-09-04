@@ -113,8 +113,9 @@ Sub Ntp_response
    'Swap B4(1) , B4(4) : Swap B4(2) , B4(3)
    'ntp_l1 now with seconds after 1900 (syssec)
    'define GETTIMEOFDAY_TO_NTP_OFFSET 2208988800UL
-   Ntp_local = Tcp_long + 1139293696
-   Ntp_local = Ntp_local + My_ntpoff                        ' offset UTC + 1 hour
+   Ntp_local = Myntp_off * 3600                             ' offset UTC + 1 hour
+   Ntp_local = Ntp_local + Tcp_long
+    Ntp_local = Ntp_local + 1139293696
    Ntp_ready = 255
    Call Ntp_dst_correction
    #if Ntp_debug = 1
